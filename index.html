@@ -1,0 +1,188 @@
+# index.html
+# ============================================================
+# Usage:
+#   GitHub Pages の公開ディレクトリに配置する
+# ============================================================
+
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#111827">
+    <link rel="manifest" href="manifest.json">
+    <title>Recovery Approval</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 24px;
+            background: #f3f4f6;
+            color: #111827;
+            font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        }
+        main {
+            max-width: 900px;
+            margin: 0 auto;
+        }
+        .card {
+            background: white;
+            border-radius: 16px;
+            padding: 24px;
+            margin-bottom: 20px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
+        }
+        .warning {
+            background: #fff7ed;
+            border: 1px solid #fdba74;
+            color: #9a3412;
+        }
+        pre {
+            overflow-x: auto;
+            white-space: pre-wrap;
+            word-break: break-word;
+            background: #111827;
+            color: #f9fafb;
+            padding: 16px;
+            border-radius: 10px;
+        }
+        button {
+            border: 0;
+            border-radius: 10px;
+            padding: 14px 20px;
+            font-size: 16px;
+            cursor: pointer;
+            margin-right: 8px;
+        }
+        #approve {
+            background: #16a34a;
+            color: white;
+        }
+        #reject {
+            background: #dc2626;
+            color: white;
+        }
+        button:disabled {
+            opacity: 0.5;
+            cursor: default;
+        }
+        .muted {
+            color: #6b7280;
+        }
+    </style>
+</head>
+<body>
+<main>
+    <div class="card">
+        <h1>復旧コマンドの確認</h1>
+        <p id="status" class="muted">確認中...</p>
+    </div>
+
+    <div id="content" style="display:none;">
+        <div class="card warning">
+            <h2>確認してください</h2>
+            <p>以下の history に対して、以下の実行コマンドを実行します。</p>
+            <p><strong>内容を確認して、実行してよければ「承認」を押してください。</strong></p>
+        </div>
+
+        <div class="card">
+            <h2>History</h2>
+            <pre id="history"></pre>
+        </div>
+
+        <div class="card">
+            <h2>実行コマンド</h2>
+            <pre id="command"></pre>
+            <p id="purpose"></p>
+        </div>
+
+        <div class="card">
+            <button id="approve">このコマンドを承認する</button>
+            <button id="reject">実行しない</button>
+        </div>
+    </div>
+</main>
+
+<script>
+const params = new URLSearchParams(location.search);
+const requestId = params.get("request_id");
+const token = params.get("token");
+
+const statusElement = document.getElementById("status");
+const contentElement = document.getElementById("content");
+const historyElement = document.getElementById("history");
+const commandElement = document.getElementById("command");
+const purposeElement = document.getElementById("purpose");
+const approveButton = document.getElementById("approve");
+const rejectButton = document.getElementById("reject");
+
+const apiBase = "https://YOUR-RECOVERY-API.example.com";
+
+async function loadRequest() {
+    const response = await fetch(apiBase + "/api/request/" + encodeURIComponent(requestId) + "?token=" + encodeURIComponent(token));
+    const data = await response.json();
+
+    if (data.status === "approved") {
+        statusElement.textContent = "この復旧処理はすでに承認されています。";
+        return;
+    }
+
+    if (data.status === "rejected") {
+        statusElement.textContent = "この復旧処理は拒否されています。";
+        return;
+    }
+
+    if (data.status !== "pending") {
+        statusElement.textContent = "承認要求が見つかりません。";
+        return;
+    }
+
+    historyElement.textContent = JSON.stringify(data.history, null, 2);
+    commandElement.textContent = data.command["実行コマンド"];
+    purposeElement.textContent = "目的: " + data.command["目的"];
+    statusElement.textContent = "この復旧処理を実行してよいか確認してください。";
+    contentElement.style.display = "block";
+}
+
+async function approve() {
+    approveButton.disabled = true;
+    rejectButton.disabled = true;
+
+    const response = await fetch(apiBase + "/api/request/" + encodeURIComponent(requestId) + "/approve", {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+            token: token
+        })
+    });
+
+    const data = await response.json();
+    statusElement.textContent = data.status === "approved" ? "承認しました。非公開サーバーが復旧コマンドを取得します。" : "承認できませんでした。";
+}
+
+async function reject() {
+    approveButton.disabled = true;
+    rejectButton.disabled = true;
+
+    const response = await fetch(apiBase + "/api/request/" + encodeURIComponent(requestId) + "/reject", {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+            token: token
+        })
+    });
+
+    const data = await response.json();
+    statusElement.textContent = data.status === "rejected" ? "拒否しました。復旧コマンドは実行されません。" : "拒否できませんでした。";
+}
+
+approveButton.addEventListener("click", approve);
+rejectButton.addEventListener("click", reject);
+
+loadRequest();
+</script>
+</body>
+</html>
