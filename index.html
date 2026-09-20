@@ -1,10 +1,12 @@
-# index.html
-# ============================================================
-# Usage:
-#   GitHub Pages の公開ディレクトリに配置する
-# ============================================================
-
 <!DOCTYPE html>
+<!--
+index.html
+============================================================
+Usage:
+  GitHub Pages の公開ディレクトリに配置する
+  テスト時は ?api=https://... を承認URLに付けるとAPI先を上書きできる
+============================================================
+-->
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
@@ -115,7 +117,7 @@ const purposeElement = document.getElementById("purpose");
 const approveButton = document.getElementById("approve");
 const rejectButton = document.getElementById("reject");
 
-const apiBase = "https://YOUR-RECOVERY-API.example.com";
+const apiBase = params.get("api") || "https://YOUR-RECOVERY-API.example.com";
 
 async function loadRequest() {
     const response = await fetch(apiBase + "/api/request/" + encodeURIComponent(requestId) + "?token=" + encodeURIComponent(token));
@@ -128,6 +130,11 @@ async function loadRequest() {
 
     if (data.status === "rejected") {
         statusElement.textContent = "この復旧処理は拒否されています。";
+        return;
+    }
+
+    if (data.status === "expired") {
+        statusElement.textContent = "この復旧処理は有効期限が切れています。";
         return;
     }
 
