@@ -1,0 +1,15 @@
+# manifest.json
+# ============================================================
+# Usage:
+#   index.html と同じ GitHub Pages の公開ディレクトリに配置する
+# ============================================================
+
+{
+  "name": "Recovery Approval",
+  "short_name": "Recovery",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#f3f4f6",
+  "theme_color": "#111827",
+  "icons": []
+}
