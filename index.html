@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="theme-color" content="#111827">
+    <link rel="manifest" href="./manifest.json">
+    <link rel="icon" href="./icon-192.png">
+    <link rel="apple-touch-icon" href="./icon-192.png">
+    <link rel="stylesheet" href="./style.css">
+    <title>Server Approval</title>
+</head>
+<body>
+    <main class="app">
+        <header class="header">
+            <h1>Server Approval</h1>
+            <p>サーバーの承認リクエストを管理します</p>
+        </header>
+
+        <!-- Pyodide起動中バナー -->
+        <section id="bootBanner" class="boot-banner">
+            <span class="spinner"></span>
+            <span id="bootBannerText">Python実行環境を起動しています…</span>
+        </section>
+
+        <!-- 接続設定バー -->
+        <section id="connectionBar" class="connection-bar hidden">
+            <span id="connectionDot" class="connection-dot"></span>
+            <span id="connectionText" class="connection-text">未設定</span>
+            <button id="settingsButton" type="button">API設定</button>
+        </section>
+
+        <section class="card">
+            <div class="card-head">
+                <h2>リクエスト一覧</h2>
+                <button id="newButton">＋ 新規登録</button>
+            </div>
+            <div id="listArea" class="list"></div>
+        </section>
+
+        <section id="message" class="message hidden"></section>
+    </main>
+
+    <!-- API設定モーダル -->
+    <div id="settingsModal" class="modal hidden">
+        <div class="modal-content">
+            <h2>API接続設定</h2>
+            <p class="settings-hint">orchestrator_server-v1 を cloudflared で公開したURLを入力してください。<br>例: https://xxxxx.trycloudflare.com</p>
+
+            <label for="apiUrlInput">API URL</label>
+            <div class="url-row">
+                <input id="apiUrlInput" type="text" placeholder="https://xxxxx.trycloudflare.com" autocomplete="off" inputmode="url">
+            </div>
+            <p id="settingsTestResult" class="settings-hint"></p>
+
+            <div class="modal-buttons">
+                <button id="settingsCancelButton" class="cancel-button">キャンセル</button>
+                <button id="settingsTestButton" class="edit-button">接続テスト</button>
+                <button id="settingsSaveButton" class="approve-button">保存</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 新規登録 / 編集モーダル共通 -->
+    <div id="editModal" class="modal hidden">
+        <div class="modal-content">
+            <h2 id="editModalTitle">新規登録</h2>
+
+            <label for="editId">サーバーID</label>
+            <input id="editId" type="text" placeholder="サーバーIDを入力" autocomplete="off">
+
+            <label for="editPurpose">目的</label>
+            <input id="editPurpose" type="text" placeholder="目的を入力" autocomplete="off">
+
+            <label for="editCommand">実行コマンド</label>
+            <textarea id="editCommand" placeholder="実行コマンドを入力" rows="3"></textarea>
+
+            <label for="editStatus">状態</label>
+            <select id="editStatus">
+                <option value="承認待ち">承認待ち</option>
+                <option value="承認済み">承認済み</option>
+            </select>
+
+            <div class="modal-buttons">
+                <button id="editCancelButton" class="cancel-button">キャンセル</button>
+                <button id="editSaveButton" class="approve-button">保存</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 削除確認モーダル -->
+    <div id="deleteModal" class="modal hidden">
+        <div class="modal-content">
+            <h2>削除の確認</h2>
+            <p id="deleteModalText">このリクエストを削除しますか？</p>
+            <div class="modal-buttons">
+                <button id="deleteCancelButton" class="cancel-button">キャンセル</button>
+                <button id="deleteConfirmButton" class="danger-button">削除する</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Pyodide (ブラウザ内でAPI通信処理をPythonで実行する) -->
+    <script src="https://cdn.jsdelivr.net/pyodide/v0.26.4/full/pyodide.js"></script>
+    <script src="./app.js"></script>
+</body>
+</html>
