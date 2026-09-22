@@ -1,9 +1,3 @@
-# app.js
-# ============================================================
-# Usage:
-#   index.htmlから読み込んで使用する
-# ============================================================
-
 let currentServerId = "";
 
 const serverIdInput = document.getElementById("serverId");
