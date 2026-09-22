@@ -1,39 +1,69 @@
 # index.html
 # ============================================================
 # Usage:
-#   ブラウザまたはPWAとしてindex.htmlを開く
+#   PWAのトップページとして使用する
 # ============================================================
 
 <!DOCTYPE html>
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <meta name="theme-color" content="#111827">
     <link rel="manifest" href="/manifest.json">
     <link rel="stylesheet" href="/style.css">
     <title>Server Approval</title>
 </head>
 <body>
-    <main class="container">
-        <h1>Server Approval</h1>
+    <main class="app">
+        <header class="header">
+            <h1>Server Approval</h1>
+            <p>サーバーの状態を管理します</p>
+        </header>
 
         <section class="card">
-            <h2>サーバーID</h2>
-            <input id="serverId" type="text" placeholder="サーバーIDを入力">
-            <button onclick="accessServer()">アクセス</button>
+            <label for="serverId">サーバーID</label>
+
+            <div class="input-group">
+                <input id="serverId" type="text" placeholder="サーバーIDを入力" autocomplete="off">
+                <button id="accessButton">アクセス</button>
+            </div>
         </section>
 
-        <section id="serverSection" class="card hidden">
-            <h2>サーバー状態</h2>
+        <section id="serverPanel" class="card hidden">
+            <div class="server-info">
+                <div>
+                    <span class="label">サーバーID</span>
+                    <span id="currentServerId" class="value">---</span>
+                </div>
 
-            <div id="status" class="status">---</div>
+                <div>
+                    <span class="label">現在の状態</span>
+                    <span id="serverStatus" class="status pending">---</span>
+                </div>
+            </div>
 
-            <button class="approve" onclick="approveServer()">承認</button>
+            <button id="approveButton" class="approve-button">
+                承認する
+            </button>
         </section>
 
-        <section id="message" class="message"></section>
+        <section id="message" class="message hidden"></section>
     </main>
+
+    <div id="approvalModal" class="modal hidden">
+        <div class="modal-content">
+            <h2>サーバーを承認</h2>
+            <p>承認するサーバーIDを入力してください。</p>
+
+            <input id="approvalServerId" type="text" placeholder="サーバーIDを入力" autocomplete="off">
+
+            <div class="modal-buttons">
+                <button id="cancelButton" class="cancel-button">キャンセル</button>
+                <button id="confirmButton" class="approve-button">承認する</button>
+            </div>
+        </div>
+    </div>
 
     <script src="/app.js"></script>
 </body>
