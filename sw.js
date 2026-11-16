@@ -6,7 +6,7 @@
 // 基準にキャッシュ対象URLを組み立てる（絶対パス "/xxx" は使わない）。
 // ============================================================
 
-const CACHE_NAME = "server-approval-v3";
+const CACHE_NAME = "server-approval-v4";
 
 // self.registration.scope は sw.js を登録したスコープの絶対URL
 // （例: https://xxxxx.github.io/approval-v1/）
@@ -16,7 +16,6 @@ const CACHE_FILES = [
     "",
     "index.html",
     "app.js",
-    "orchestrator_api.py",
     "style.css",
     "manifest.json",
     "icon-192.png",
@@ -53,7 +52,7 @@ self.addEventListener("fetch", event => {
         return;
     }
 
-    // 外部CDN（Pyodide本体やパッケージ）やAPIサーバーへのリクエストは
+    // 外部のAPIサーバーなど、別オリジンへのリクエストは
     // このアプリ固有のキャッシュ管理下に置かず素通しする。
     const requestUrl = new URL(event.request.url);
     const scopeUrl = new URL(SCOPE);
