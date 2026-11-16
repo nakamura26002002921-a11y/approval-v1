@@ -9,6 +9,7 @@
 //   3. API URL（cloudflaredの公開URL）はlocalStorageに保存し、
 //      設定モーダルから毎回変更できるようにする
 //   4. 一覧表示・新規登録・編集・削除・承認のUIロジック
+//   5. 承認URL(#id=&token=&api=)で開いたとき、1件の承認要求を表示する
 // ============================================================
 
 const STORAGE_KEY = "approvalApp.apiUrl";
@@ -28,6 +29,13 @@ const settingsTestResult = document.getElementById("settingsTestResult");
 const settingsCancelButton = document.getElementById("settingsCancelButton");
 const settingsTestButton = document.getElementById("settingsTestButton");
 const settingsSaveButton = document.getElementById("settingsSaveButton");
+
+const approvalCard = document.getElementById("approvalCard");
+const approvalId = document.getElementById("approvalId");
+const approvalStatus = document.getElementById("approvalStatus");
+const approvalPurpose = document.getElementById("approvalPurpose");
+const approvalCommand = document.getElementById("approvalCommand");
+const approvalApi = document.getElementById("approvalApi");
 
 const listArea = document.getElementById("listArea");
 const newButton = document.getElementById("newButton");
@@ -53,6 +61,40 @@ let deleteTargetId = "";
 
 let pyodide = null;
 let pyReady = false;
+let approvalLinkOpened = false;
+
+
+// ------------------------------------------------------------
+// 承認URLで開いたときの、1件の承認要求の表示
+// ------------------------------------------------------------
+async function showApprovalRequest() {
+    const params = new URLSearchParams(location.hash.slice(1));
+    const id = params.get("id");
+    const token = params.get("token");
+    const api = params.get("api");
+    if (!id || !token || !api) return;
+    approvalLinkOpened = true;
+    // トークンをアドレスバーと履歴に残さないよう、最初にフラグメントを消す
+    history.replaceState(null, "", location.pathname + location.search);
+    try {
+        const url = `${api.replace(/\/+$/, "")}/api/requests/${encodeURIComponent(id)}`;
+        const response = await fetch(url, { headers: { "X-Approval-Token": token } });
+        const data = await response.json();
+        if (!response.ok) {
+            showMessage(`承認リクエストを取得できません: ${data.status || response.status}`, "error");
+            return;
+        }
+        approvalId.textContent = id;
+        approvalStatus.textContent = data.status;
+        approvalStatus.className = `status ${data.status === "承認済み" ? "approved" : "pending"}`;
+        approvalPurpose.textContent = data.purpose;
+        approvalCommand.textContent = data.command;
+        approvalApi.textContent = new URL(api).host;
+        approvalCard.classList.remove("hidden");
+    } catch (err) {
+        showMessage(`承認リクエストを取得できません: ${err.message}`, "error");
+    }
+}
 
 
 // ------------------------------------------------------------
@@ -91,7 +133,7 @@ pyodide_http.patch_all()
             await checkConnectionAndLoad();
         } else {
             updateConnectionStatus("pending", "APIのURLが未設定です");
-            openSettingsModal();
+            if (!approvalLinkOpened) openSettingsModal();
         }
     } catch (err) {
         console.error(err);
@@ -420,4 +462,5 @@ if ("serviceWorker" in navigator) {
     });
 }
 
+showApprovalRequest();
 initPyodide();
