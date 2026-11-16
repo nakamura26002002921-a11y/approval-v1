@@ -45,6 +45,10 @@
                     <div><span class="label">実行コマンド</span><span id="approvalCommand" class="value command"></span></div>
                     <div><span class="label">接続先</span><span id="approvalApi" class="value"></span></div>
                 </div>
+                <div id="approvalActions" class="item-actions hidden">
+                    <button id="approvalApproveButton" class="approve-button" type="button">承認する</button>
+                    <button id="approvalRejectButton" class="danger-button" type="button">却下する</button>
+                </div>
             </div>
         </section>
 
@@ -69,6 +73,18 @@
             <div class="url-row">
                 <input id="apiUrlInput" type="text" placeholder="https://xxxxx.trycloudflare.com" autocomplete="off" inputmode="url">
             </div>
+
+            <label for="localUrlInput">ローカルURL</label>
+            <div class="url-row">
+                <input id="localUrlInput" type="text" placeholder="http://127.0.0.1:5000" autocomplete="off" inputmode="url">
+            </div>
+            <p class="settings-hint">このブラウザと同じPCで動かしているサーバーのURLです。</p>
+
+            <label for="apiTargetSelect">使う接続先</label>
+            <select id="apiTargetSelect">
+                <option value="remote">API URL（公開）</option>
+                <option value="local">ローカルURL</option>
+            </select>
             <p id="settingsTestResult" class="settings-hint"></p>
 
             <div class="modal-buttons">
