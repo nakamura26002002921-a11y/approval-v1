@@ -1,16 +1,12 @@
 // app.js
 // ============================================================
-// index.htmlから読み込んで使用する。
+// 承認サーバー(recovery_server.py)の承認画面。
 //
 // 構成:
-//   1. Pyodide（ブラウザ内Python実行環境）を起動する
-//   2. orchestrator_api.py をPyodideに読み込ませ、
-//      requests(HTTP)をPyodide側から呼べるようにする
-//   3. API URL（cloudflaredの公開URL）はlocalStorageに保存し、
-//      設定モーダルから毎回変更できるようにする
-//   4. 一覧表示・新規登録・編集・削除・承認のUIロジック
-//   5. 承認URL(#id=&token=&api=)で開いたとき、1件の承認要求を表示し、承認・却下する
-//   6. 接続先は「API URL（公開）」と「ローカルURL」から選べる
+//   1. 承認URL(#id=&token=&api=)で開いたとき、1件の承認要求を表示し、承認・却下する
+//   2. 「API設定」で接続先(公開URL / ローカルURL)を保存し、接続テストをする
+//
+// 通信はブラウザ標準の fetch だけで行う(Pyodide は使わない)。
 // ============================================================
 
 const STORAGE_KEY = "approvalApp.apiUrl";
@@ -18,10 +14,6 @@ const STORAGE_LOCAL_KEY = "approvalApp.localUrl";
 const STORAGE_TARGET_KEY = "approvalApp.target"; // "remote" | "local"
 
 // ---- DOM要素 ----
-const bootBanner = document.getElementById("bootBanner");
-const bootBannerText = document.getElementById("bootBannerText");
-
-const connectionBar = document.getElementById("connectionBar");
 const connectionDot = document.getElementById("connectionDot");
 const connectionText = document.getElementById("connectionText");
 const settingsButton = document.getElementById("settingsButton");
@@ -36,6 +28,7 @@ const settingsTestButton = document.getElementById("settingsTestButton");
 const settingsSaveButton = document.getElementById("settingsSaveButton");
 
 const approvalCard = document.getElementById("approvalCard");
+const idleCard = document.getElementById("idleCard");
 const approvalId = document.getElementById("approvalId");
 const approvalStatus = document.getElementById("approvalStatus");
 const approvalPurpose = document.getElementById("approvalPurpose");
@@ -45,32 +38,71 @@ const approvalActions = document.getElementById("approvalActions");
 const approvalApproveButton = document.getElementById("approvalApproveButton");
 const approvalRejectButton = document.getElementById("approvalRejectButton");
 
-const listArea = document.getElementById("listArea");
-const newButton = document.getElementById("newButton");
 const message = document.getElementById("message");
 
-const editModal = document.getElementById("editModal");
-const editModalTitle = document.getElementById("editModalTitle");
-const editId = document.getElementById("editId");
-const editPurpose = document.getElementById("editPurpose");
-const editCommand = document.getElementById("editCommand");
-const editStatus = document.getElementById("editStatus");
-const editCancelButton = document.getElementById("editCancelButton");
-const editSaveButton = document.getElementById("editSaveButton");
-
-const deleteModal = document.getElementById("deleteModal");
-const deleteModalText = document.getElementById("deleteModalText");
-const deleteCancelButton = document.getElementById("deleteCancelButton");
-const deleteConfirmButton = document.getElementById("deleteConfirmButton");
-
-let editMode = "create"; // "create" | "edit"
-let editOriginalId = "";
-let deleteTargetId = "";
-
-let pyodide = null;
-let pyReady = false;
 let approvalLinkOpened = false;
 let approvalContext = null; // { id, token, base } 承認URLから読んだ値。メモリ上にだけ持つ
+
+
+// ------------------------------------------------------------
+// localStorage (プライベートモードなどで例外になっても動くようにする)
+// ------------------------------------------------------------
+function storageGet(key) {
+    try {
+        return localStorage.getItem(key) || "";
+    } catch (err) {
+        return "";
+    }
+}
+
+
+function storageSet(key, value) {
+    try {
+        localStorage.setItem(key, value);
+    } catch (err) {
+        console.warn("localStorage に保存できません:", err);
+    }
+}
+
+
+// ------------------------------------------------------------
+// 通信 (fetch)
+// ------------------------------------------------------------
+function describeNetworkError(err, url) {
+    if (err && err.name === "AbortError") {
+        return "タイムアウトしました。サーバーが起動しているか確認してください。";
+    }
+    const hints = [
+        "サーバーが起動しているか",
+        `サーバーの CORS 設定(APPROVAL_URL / CORS_ORIGINS)がこのページのオリジン(${location.origin})を許可しているか`
+    ];
+    if (location.protocol === "https:" && /^http:\/\//i.test(url)) {
+        hints.push("HTTPSのページから http:// への接続はブラウザにブロックされることがあります(ローカルネットワークへのアクセス許可の確認や、ページをローカルで配信する方法があります)");
+    }
+    return `接続できませんでした。確認してください: ${hints.join(" / ")}`;
+}
+
+
+// 戻り値: { reached, ok, status, data, error }
+//   reached: サーバーから HTTP 応答が返ってきたか(CORS を通った証拠にもなる)
+async function request(url, options = {}, timeoutMs = 10000) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+        const response = await fetch(url, { ...options, signal: controller.signal });
+        let data = null;
+        try {
+            data = await response.json();
+        } catch (err) {
+            data = null;
+        }
+        return { reached: true, ok: response.ok, status: response.status, data, error: "" };
+    } catch (err) {
+        return { reached: false, ok: false, status: 0, data: null, error: describeNetworkError(err, url) };
+    } finally {
+        clearTimeout(timer);
+    }
+}
 
 
 // ------------------------------------------------------------
@@ -86,46 +118,59 @@ async function showApprovalRequest() {
     // トークンをアドレスバーと履歴に残さないよう、最初にフラグメントを消す
     history.replaceState(null, "", location.pathname + location.search);
     approvalContext = { id, token, base: `${api.replace(/\/+$/, "")}/api/requests/${encodeURIComponent(id)}` };
+    idleCard.classList.add("hidden");
+    updateConnectionStatus("pending", `確認中… ${new URL(approvalContext.base).host}`);
     await loadApprovalRequest();
 }
 
 
 async function loadApprovalRequest() {
-    try {
-        const response = await fetch(approvalContext.base, { headers: { "X-Approval-Token": approvalContext.token } });
-        const data = await response.json();
-        if (!response.ok) {
-            showMessage(`承認リクエストを取得できません: ${data.status || response.status}`, "error");
-            return;
-        }
-        approvalId.textContent = approvalContext.id;
-        approvalStatus.textContent = data.status;
-        approvalStatus.className = `status ${data.status === "承認済み" ? "approved" : "pending"}`;
-        approvalPurpose.textContent = data.purpose;
-        approvalCommand.textContent = data.command;
-        approvalApi.textContent = new URL(approvalContext.base).host;
-        approvalActions.classList.toggle("hidden", data.status !== "承認待ち");
-        approvalCard.classList.remove("hidden");
-    } catch (err) {
-        showMessage(`承認リクエストを取得できません: ${err.message}`, "error");
+    const host = new URL(approvalContext.base).host;
+    const result = await request(approvalContext.base, { headers: { "X-Approval-Token": approvalContext.token } });
+
+    if (!result.reached) {
+        updateConnectionStatus("ng", `接続失敗: ${host}`);
+        showMessage(`承認リクエストを取得できません: ${result.error}`, "error");
+        return;
     }
+    if (!result.ok) {
+        updateConnectionStatus("ok", `接続中: ${host}`);
+        const reason = (result.data && result.data.status) || result.status;
+        showMessage(`承認リクエストを取得できません: ${reason}`, "error");
+        return;
+    }
+
+    const data = result.data || {};
+    updateConnectionStatus("ok", `接続中: ${host}`);
+    approvalId.textContent = approvalContext.id;
+    approvalStatus.textContent = data.status;
+    approvalStatus.className = `status ${data.status === "承認済み" ? "approved" : "pending"}`;
+    approvalPurpose.textContent = data.purpose;
+    approvalCommand.textContent = data.command;
+    approvalApi.textContent = host;
+    approvalActions.classList.toggle("hidden", data.status !== "承認待ち");
+    approvalCard.classList.remove("hidden");
 }
 
 
 async function decideApproval(action) {
     approvalApproveButton.disabled = true;
     approvalRejectButton.disabled = true;
-    try {
-        const response = await fetch(`${approvalContext.base}/${action}`, { method: "POST", headers: { "X-Approval-Token": approvalContext.token } });
-        const data = await response.json();
-        if (response.ok) {
-            showMessage(`${approvalContext.id} を${action === "approve" ? "承認" : "却下"}しました。`, "success");
-        } else {
-            showMessage(`操作できません: ${data.status || response.status}`, "error");
-        }
-    } catch (err) {
-        showMessage(`操作に失敗しました: ${err.message}`, "error");
+
+    const result = await request(`${approvalContext.base}/${action}`, {
+        method: "POST",
+        headers: { "X-Approval-Token": approvalContext.token }
+    });
+
+    if (!result.reached) {
+        showMessage(`操作に失敗しました: ${result.error}`, "error");
+    } else if (result.ok) {
+        showMessage(`${approvalContext.id} を${action === "approve" ? "承認" : "却下"}しました。`, "success");
+    } else {
+        const reason = (result.data && result.data.status) || result.status;
+        showMessage(`操作できません: ${reason}`, "error");
     }
+
     approvalApproveButton.disabled = false;
     approvalRejectButton.disabled = false;
     await loadApprovalRequest();
@@ -133,50 +178,8 @@ async function decideApproval(action) {
 
 
 // ------------------------------------------------------------
-// Pyodide 初期化
+// 接続設定
 // ------------------------------------------------------------
-async function initPyodide() {
-    try {
-        bootBannerText.textContent = "Python実行環境を起動しています…";
-        pyodide = await loadPyodide();
-
-        bootBannerText.textContent = "通信ライブラリを準備しています…";
-        await pyodide.loadPackage(["micropip"]);
-
-        const micropip = pyodide.pyimport("micropip");
-        // pyodide-http: requests の呼び出しをブラウザfetchにブリッジするパッケージ
-        await micropip.install(["requests", "pyodide-http"]);
-
-        await pyodide.runPythonAsync(`
-import pyodide_http
-pyodide_http.patch_all()
-        `);
-
-        bootBannerText.textContent = "APIクライアントを読み込んでいます…";
-        const apiSource = await (await fetch("./orchestrator_api.py")).text();
-        await pyodide.runPythonAsync(apiSource);
-
-        pyReady = true;
-        bootBanner.classList.add("hidden");
-        connectionBar.classList.remove("hidden");
-
-        const savedUrl = getActiveUrl();
-        if (savedUrl) {
-            await pyodide.runPythonAsync(`set_base_url(${JSON.stringify(savedUrl)})`);
-            updateConnectionStatus("pending", savedUrl);
-            await checkConnectionAndLoad();
-        } else {
-            updateConnectionStatus("pending", "APIのURLが未設定です");
-            if (!approvalLinkOpened) openSettingsModal();
-        }
-    } catch (err) {
-        console.error(err);
-        bootBannerText.textContent = "Python実行環境の起動に失敗しました。ページを再読み込みしてください。";
-        bootBanner.classList.remove("hidden");
-    }
-}
-
-
 function updateConnectionStatus(state, text) {
     connectionDot.classList.remove("ok", "ng", "pending");
     connectionDot.classList.add(state);
@@ -184,16 +187,6 @@ function updateConnectionStatus(state, text) {
 }
 
 
-async function callPy(pyCall) {
-    // pyodide.runPythonAsync の戻り値(JSON文字列)をパースして返す共通ラッパー
-    const resultStr = await pyodide.runPythonAsync(pyCall);
-    return JSON.parse(resultStr);
-}
-
-
-// ------------------------------------------------------------
-// 接続設定
-// ------------------------------------------------------------
 function normalizeUrl(text, defaultScheme) {
     const trimmed = text.trim().replace(/\/+$/, "");
     if (!trimmed) return "";
@@ -202,8 +195,8 @@ function normalizeUrl(text, defaultScheme) {
 
 
 function getActiveUrl() {
-    const isLocal = localStorage.getItem(STORAGE_TARGET_KEY) === "local";
-    return localStorage.getItem(isLocal ? STORAGE_LOCAL_KEY : STORAGE_KEY) || "";
+    const isLocal = storageGet(STORAGE_TARGET_KEY) === "local";
+    return storageGet(isLocal ? STORAGE_LOCAL_KEY : STORAGE_KEY);
 }
 
 
@@ -214,9 +207,9 @@ function getSelectedUrl() {
 
 
 function openSettingsModal() {
-    apiUrlInput.value = localStorage.getItem(STORAGE_KEY) || "";
-    localUrlInput.value = localStorage.getItem(STORAGE_LOCAL_KEY) || "";
-    apiTargetSelect.value = localStorage.getItem(STORAGE_TARGET_KEY) === "local" ? "local" : "remote";
+    apiUrlInput.value = storageGet(STORAGE_KEY);
+    localUrlInput.value = storageGet(STORAGE_LOCAL_KEY);
+    apiTargetSelect.value = storageGet(STORAGE_TARGET_KEY) === "local" ? "local" : "remote";
     settingsTestResult.textContent = "";
     settingsModal.classList.remove("hidden");
     apiUrlInput.focus();
@@ -228,21 +221,36 @@ function closeSettingsModal() {
 }
 
 
-async function testConnection(url) {
-    if (!pyReady) return;
-    settingsTestResult.textContent = "接続を確認しています…";
-    await pyodide.runPythonAsync(`set_base_url(${JSON.stringify(url)})`);
-    const result = await callPy("check_health()");
+// サーバーの疎通を確認する。
+// "/" は応答が返りさえすれば(404 でも)到達と CORS の確認になる。
+async function checkServer(url) {
+    const result = await request(`${url}/`);
 
-    if (result.ok) {
-        settingsTestResult.textContent = `接続に成功しました（${result.data.name || "OK"} / ${result.data.status || ""}）`;
-        settingsTestResult.style.color = "#166534";
-        return true;
+    if (!result.reached) {
+        return { ok: false, text: result.error };
     }
+    if (result.ok) {
+        const name = (result.data && result.data.name) || "OK";
+        const status = (result.data && result.data.status) || "";
+        return { ok: true, text: `接続に成功しました(${name} ${status})`.trim() };
+    }
+    return { ok: true, text: `接続に成功しました(サーバーは応答しましたが、"/" は status ${result.status} でした)` };
+}
 
-    settingsTestResult.textContent = `接続に失敗しました: ${result.data.error || "status " + result.status}`;
-    settingsTestResult.style.color = "#991b1b";
-    return false;
+
+async function testConnection(url) {
+    if (!url) {
+        settingsTestResult.textContent = "選んだ接続先のURLを入力してください。";
+        settingsTestResult.style.color = "#991b1b";
+        return false;
+    }
+    settingsTestResult.style.color = "";
+    settingsTestResult.textContent = "接続を確認しています…";
+
+    const result = await checkServer(url);
+    settingsTestResult.textContent = result.text;
+    settingsTestResult.style.color = result.ok ? "#166534" : "#991b1b";
+    return result.ok;
 }
 
 
@@ -255,17 +263,16 @@ async function saveSettings() {
         return;
     }
 
-    localStorage.setItem(STORAGE_KEY, normalizeUrl(apiUrlInput.value, "https"));
-    localStorage.setItem(STORAGE_LOCAL_KEY, normalizeUrl(localUrlInput.value, "http"));
-    localStorage.setItem(STORAGE_TARGET_KEY, apiTargetSelect.value);
-    await pyodide.runPythonAsync(`set_base_url(${JSON.stringify(url)})`);
+    storageSet(STORAGE_KEY, normalizeUrl(apiUrlInput.value, "https"));
+    storageSet(STORAGE_LOCAL_KEY, normalizeUrl(localUrlInput.value, "http"));
+    storageSet(STORAGE_TARGET_KEY, apiTargetSelect.value);
 
     closeSettingsModal();
-    await checkConnectionAndLoad();
+    await checkConnection();
 }
 
 
-async function checkConnectionAndLoad() {
+async function checkConnection() {
     const url = getActiveUrl();
     if (!url) {
         updateConnectionStatus("pending", "APIのURLが未設定です");
@@ -273,214 +280,15 @@ async function checkConnectionAndLoad() {
     }
 
     updateConnectionStatus("pending", `確認中… ${url}`);
-    const result = await callPy("check_health()");
+    const result = await checkServer(url);
 
     if (result.ok) {
         updateConnectionStatus("ok", `接続中: ${url}`);
-        await loadRequests();
+        message.classList.add("hidden");
     } else {
         updateConnectionStatus("ng", `接続失敗: ${url}`);
-        showMessage(`APIに接続できません: ${result.data.error || "status " + result.status}`, "error");
+        showMessage(result.text, "error");
     }
-}
-
-
-// ------------------------------------------------------------
-// 一覧表示
-// ------------------------------------------------------------
-async function loadRequests() {
-    if (!pyReady || !getActiveUrl()) return;
-
-    const result = await callPy("list_requests()");
-
-    if (!result.ok) {
-        showMessage(`一覧の取得に失敗しました: ${result.data.error || result.status}`, "error");
-        return;
-    }
-
-    renderList(result.data);
-}
-
-
-function renderList(rows) {
-    listArea.innerHTML = "";
-
-    if (!rows || rows.length === 0) {
-        listArea.innerHTML = `<p class="empty">リクエストはまだありません。</p>`;
-        return;
-    }
-
-    rows.forEach(row => {
-        const item = document.createElement("div");
-        item.className = "item";
-
-        const statusClass = row.status === "承認済み" ? "approved" : "pending";
-
-        item.innerHTML = `
-            <div class="item-main">
-                <span class="item-id">${escapeHtml(row.id)}</span>
-                <span class="status ${statusClass}">${escapeHtml(row.status)}</span>
-            </div>
-            <div class="item-detail">
-                <div><span class="label">目的</span><span class="value">${escapeHtml(row.purpose)}</span></div>
-                <div><span class="label">実行コマンド</span><span class="value command">${escapeHtml(row.command)}</span></div>
-            </div>
-            <div class="item-actions">
-                ${row.status === "承認待ち" ? `<button class="approve-button" data-action="approve" data-id="${escapeHtml(row.id)}">承認する</button>` : ""}
-                <button class="edit-button" data-action="edit" data-id="${escapeHtml(row.id)}">編集</button>
-                <button class="danger-button" data-action="delete" data-id="${escapeHtml(row.id)}">削除</button>
-            </div>
-        `;
-
-        listArea.appendChild(item);
-    });
-}
-
-
-listArea.addEventListener("click", async event => {
-    const button = event.target.closest("button[data-action]");
-    if (!button) return;
-
-    const action = button.dataset.action;
-    const id = button.dataset.id;
-
-    if (action === "approve") {
-        await approveRequest(id);
-    } else if (action === "edit") {
-        await openEditModal(id);
-    } else if (action === "delete") {
-        openDeleteModal(id);
-    }
-});
-
-
-async function approveRequest(id) {
-    const result = await callPy(`approve_request(${JSON.stringify(id)})`);
-
-    if (!result.ok) {
-        showMessage(`承認に失敗しました: ${result.data.error || result.status}`, "error");
-        return;
-    }
-
-    showMessage(`${id} を承認しました。`, "success");
-    loadRequests();
-}
-
-
-function openNewModal() {
-    editMode = "create";
-    editOriginalId = "";
-    editModalTitle.textContent = "新規登録";
-    editId.value = "";
-    editId.disabled = false;
-    editPurpose.value = "";
-    editCommand.value = "";
-    editStatus.value = "承認待ち";
-    editModal.classList.remove("hidden");
-    editId.focus();
-}
-
-
-async function openEditModal(id) {
-    const result = await callPy(`get_request(${JSON.stringify(id)})`);
-
-    if (!result.ok) {
-        showMessage(`データの取得に失敗しました: ${result.data.error || result.status}`, "error");
-        return;
-    }
-
-    const data = result.data;
-
-    editMode = "edit";
-    editOriginalId = data.id;
-    editModalTitle.textContent = "リクエストを編集";
-    editId.value = data.id;
-    editId.disabled = true;
-    editPurpose.value = data.purpose;
-    editCommand.value = data.command;
-    editStatus.value = data.status;
-    editModal.classList.remove("hidden");
-    editPurpose.focus();
-}
-
-
-function closeEditModal() {
-    editModal.classList.add("hidden");
-}
-
-
-async function saveEdit() {
-    const purpose = editPurpose.value.trim();
-    const command = editCommand.value.trim();
-
-    if (editMode === "create") {
-        const id = editId.value.trim();
-
-        if (!id || !purpose || !command) {
-            showMessage("ID・目的・実行コマンドを入力してください。", "error");
-            return;
-        }
-
-        const result = await callPy(
-            `create_request(${JSON.stringify(id)}, ${JSON.stringify(purpose)}, ${JSON.stringify(command)})`
-        );
-
-        if (!result.ok) {
-            showMessage(result.data.error || "登録に失敗しました。", "error");
-            return;
-        }
-
-        showMessage(`${id} を登録しました。`, "success");
-    } else {
-        if (!purpose || !command) {
-            showMessage("目的・実行コマンドを入力してください。", "error");
-            return;
-        }
-
-        const result = await callPy(
-            `update_request(${JSON.stringify(editOriginalId)}, ${JSON.stringify(purpose)}, ${JSON.stringify(command)}, ${JSON.stringify(editStatus.value)})`
-        );
-
-        if (!result.ok) {
-            showMessage(result.data.error || "更新に失敗しました。", "error");
-            return;
-        }
-
-        showMessage(`${editOriginalId} を更新しました。`, "success");
-    }
-
-    closeEditModal();
-    loadRequests();
-}
-
-
-function openDeleteModal(id) {
-    deleteTargetId = id;
-    deleteModalText.textContent = `${id} を削除しますか？`;
-    deleteModal.classList.remove("hidden");
-}
-
-
-function closeDeleteModal() {
-    deleteModal.classList.add("hidden");
-    deleteTargetId = "";
-}
-
-
-async function confirmDelete() {
-    const id = deleteTargetId;
-
-    const result = await callPy(`delete_request(${JSON.stringify(id)})`);
-
-    if (!result.ok) {
-        showMessage(`削除に失敗しました: ${result.data.error || result.status}`, "error");
-        closeDeleteModal();
-        return;
-    }
-
-    showMessage(`${id} を削除しました。`, "success");
-    closeDeleteModal();
-    loadRequests();
 }
 
 
@@ -491,22 +299,9 @@ function showMessage(text, type) {
 }
 
 
-function escapeHtml(text) {
-    const div = document.createElement("div");
-    div.textContent = text;
-    return div.innerHTML;
-}
-
-
 // ------------------------------------------------------------
-// イベント登録
+// イベント登録・起動
 // ------------------------------------------------------------
-newButton.addEventListener("click", openNewModal);
-editCancelButton.addEventListener("click", closeEditModal);
-editSaveButton.addEventListener("click", saveEdit);
-deleteCancelButton.addEventListener("click", closeDeleteModal);
-deleteConfirmButton.addEventListener("click", confirmDelete);
-
 settingsButton.addEventListener("click", openSettingsModal);
 settingsCancelButton.addEventListener("click", closeSettingsModal);
 settingsTestButton.addEventListener("click", () => testConnection(getSelectedUrl()));
@@ -521,5 +316,17 @@ if ("serviceWorker" in navigator) {
     });
 }
 
-showApprovalRequest();
-initPyodide();
+async function start() {
+    await showApprovalRequest();
+    // 承認URLで開いた場合は、そのURLの接続先で状態を表示済みなので、保存済みURLの確認はしない
+    if (approvalLinkOpened) return;
+
+    if (getActiveUrl()) {
+        await checkConnection();
+    } else {
+        updateConnectionStatus("pending", "APIのURLが未設定です");
+        openSettingsModal();
+    }
+}
+
+start();
