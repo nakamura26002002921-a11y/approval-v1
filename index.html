@@ -30,6 +30,24 @@
             <button id="settingsButton" type="button">API設定</button>
         </section>
 
+        <!-- 承認URL(#id=&token=&api=)で開いたときだけ表示する、1件の承認要求の確認 -->
+        <section id="approvalCard" class="card hidden">
+            <div class="card-head">
+                <h2>承認リクエストの確認</h2>
+            </div>
+            <div class="item">
+                <div class="item-main">
+                    <span id="approvalId" class="item-id"></span>
+                    <span id="approvalStatus" class="status"></span>
+                </div>
+                <div class="item-detail">
+                    <div><span class="label">目的</span><span id="approvalPurpose" class="value"></span></div>
+                    <div><span class="label">実行コマンド</span><span id="approvalCommand" class="value command"></span></div>
+                    <div><span class="label">接続先</span><span id="approvalApi" class="value"></span></div>
+                </div>
+            </div>
+        </section>
+
         <section class="card">
             <div class="card-head">
                 <h2>リクエスト一覧</h2>
