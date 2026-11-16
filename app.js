@@ -9,10 +9,13 @@
 //   3. API URL（cloudflaredの公開URL）はlocalStorageに保存し、
 //      設定モーダルから毎回変更できるようにする
 //   4. 一覧表示・新規登録・編集・削除・承認のUIロジック
-//   5. 承認URL(#id=&token=&api=)で開いたとき、1件の承認要求を表示する
+//   5. 承認URL(#id=&token=&api=)で開いたとき、1件の承認要求を表示し、承認・却下する
+//   6. 接続先は「API URL（公開）」と「ローカルURL」から選べる
 // ============================================================
 
 const STORAGE_KEY = "approvalApp.apiUrl";
+const STORAGE_LOCAL_KEY = "approvalApp.localUrl";
+const STORAGE_TARGET_KEY = "approvalApp.target"; // "remote" | "local"
 
 // ---- DOM要素 ----
 const bootBanner = document.getElementById("bootBanner");
@@ -25,6 +28,8 @@ const settingsButton = document.getElementById("settingsButton");
 
 const settingsModal = document.getElementById("settingsModal");
 const apiUrlInput = document.getElementById("apiUrlInput");
+const localUrlInput = document.getElementById("localUrlInput");
+const apiTargetSelect = document.getElementById("apiTargetSelect");
 const settingsTestResult = document.getElementById("settingsTestResult");
 const settingsCancelButton = document.getElementById("settingsCancelButton");
 const settingsTestButton = document.getElementById("settingsTestButton");
@@ -36,6 +41,9 @@ const approvalStatus = document.getElementById("approvalStatus");
 const approvalPurpose = document.getElementById("approvalPurpose");
 const approvalCommand = document.getElementById("approvalCommand");
 const approvalApi = document.getElementById("approvalApi");
+const approvalActions = document.getElementById("approvalActions");
+const approvalApproveButton = document.getElementById("approvalApproveButton");
+const approvalRejectButton = document.getElementById("approvalRejectButton");
 
 const listArea = document.getElementById("listArea");
 const newButton = document.getElementById("newButton");
@@ -62,6 +70,7 @@ let deleteTargetId = "";
 let pyodide = null;
 let pyReady = false;
 let approvalLinkOpened = false;
+let approvalContext = null; // { id, token, base } 承認URLから読んだ値。メモリ上にだけ持つ
 
 
 // ------------------------------------------------------------
@@ -76,24 +85,50 @@ async function showApprovalRequest() {
     approvalLinkOpened = true;
     // トークンをアドレスバーと履歴に残さないよう、最初にフラグメントを消す
     history.replaceState(null, "", location.pathname + location.search);
+    approvalContext = { id, token, base: `${api.replace(/\/+$/, "")}/api/requests/${encodeURIComponent(id)}` };
+    await loadApprovalRequest();
+}
+
+
+async function loadApprovalRequest() {
     try {
-        const url = `${api.replace(/\/+$/, "")}/api/requests/${encodeURIComponent(id)}`;
-        const response = await fetch(url, { headers: { "X-Approval-Token": token } });
+        const response = await fetch(approvalContext.base, { headers: { "X-Approval-Token": approvalContext.token } });
         const data = await response.json();
         if (!response.ok) {
             showMessage(`承認リクエストを取得できません: ${data.status || response.status}`, "error");
             return;
         }
-        approvalId.textContent = id;
+        approvalId.textContent = approvalContext.id;
         approvalStatus.textContent = data.status;
         approvalStatus.className = `status ${data.status === "承認済み" ? "approved" : "pending"}`;
         approvalPurpose.textContent = data.purpose;
         approvalCommand.textContent = data.command;
-        approvalApi.textContent = new URL(api).host;
+        approvalApi.textContent = new URL(approvalContext.base).host;
+        approvalActions.classList.toggle("hidden", data.status !== "承認待ち");
         approvalCard.classList.remove("hidden");
     } catch (err) {
         showMessage(`承認リクエストを取得できません: ${err.message}`, "error");
     }
+}
+
+
+async function decideApproval(action) {
+    approvalApproveButton.disabled = true;
+    approvalRejectButton.disabled = true;
+    try {
+        const response = await fetch(`${approvalContext.base}/${action}`, { method: "POST", headers: { "X-Approval-Token": approvalContext.token } });
+        const data = await response.json();
+        if (response.ok) {
+            showMessage(`${approvalContext.id} を${action === "approve" ? "承認" : "却下"}しました。`, "success");
+        } else {
+            showMessage(`操作できません: ${data.status || response.status}`, "error");
+        }
+    } catch (err) {
+        showMessage(`操作に失敗しました: ${err.message}`, "error");
+    }
+    approvalApproveButton.disabled = false;
+    approvalRejectButton.disabled = false;
+    await loadApprovalRequest();
 }
 
 
@@ -125,9 +160,8 @@ pyodide_http.patch_all()
         bootBanner.classList.add("hidden");
         connectionBar.classList.remove("hidden");
 
-        const savedUrl = localStorage.getItem(STORAGE_KEY) || "";
+        const savedUrl = getActiveUrl();
         if (savedUrl) {
-            apiUrlInput.value = savedUrl;
             await pyodide.runPythonAsync(`set_base_url(${JSON.stringify(savedUrl)})`);
             updateConnectionStatus("pending", savedUrl);
             await checkConnectionAndLoad();
@@ -160,8 +194,29 @@ async function callPy(pyCall) {
 // ------------------------------------------------------------
 // 接続設定
 // ------------------------------------------------------------
+function normalizeUrl(text, defaultScheme) {
+    const trimmed = text.trim().replace(/\/+$/, "");
+    if (!trimmed) return "";
+    return /^https?:\/\//i.test(trimmed) ? trimmed : `${defaultScheme}://${trimmed}`;
+}
+
+
+function getActiveUrl() {
+    const isLocal = localStorage.getItem(STORAGE_TARGET_KEY) === "local";
+    return localStorage.getItem(isLocal ? STORAGE_LOCAL_KEY : STORAGE_KEY) || "";
+}
+
+
+function getSelectedUrl() {
+    if (apiTargetSelect.value === "local") return normalizeUrl(localUrlInput.value, "http");
+    return normalizeUrl(apiUrlInput.value, "https");
+}
+
+
 function openSettingsModal() {
     apiUrlInput.value = localStorage.getItem(STORAGE_KEY) || "";
+    localUrlInput.value = localStorage.getItem(STORAGE_LOCAL_KEY) || "";
+    apiTargetSelect.value = localStorage.getItem(STORAGE_TARGET_KEY) === "local" ? "local" : "remote";
     settingsTestResult.textContent = "";
     settingsModal.classList.remove("hidden");
     apiUrlInput.focus();
@@ -192,15 +247,17 @@ async function testConnection(url) {
 
 
 async function saveSettings() {
-    const url = apiUrlInput.value.trim();
+    const url = getSelectedUrl();
 
     if (!url) {
-        settingsTestResult.textContent = "URLを入力してください。";
+        settingsTestResult.textContent = "選んだ接続先のURLを入力してください。";
         settingsTestResult.style.color = "#991b1b";
         return;
     }
 
-    localStorage.setItem(STORAGE_KEY, url);
+    localStorage.setItem(STORAGE_KEY, normalizeUrl(apiUrlInput.value, "https"));
+    localStorage.setItem(STORAGE_LOCAL_KEY, normalizeUrl(localUrlInput.value, "http"));
+    localStorage.setItem(STORAGE_TARGET_KEY, apiTargetSelect.value);
     await pyodide.runPythonAsync(`set_base_url(${JSON.stringify(url)})`);
 
     closeSettingsModal();
@@ -209,7 +266,7 @@ async function saveSettings() {
 
 
 async function checkConnectionAndLoad() {
-    const url = localStorage.getItem(STORAGE_KEY) || "";
+    const url = getActiveUrl();
     if (!url) {
         updateConnectionStatus("pending", "APIのURLが未設定です");
         return;
@@ -232,7 +289,7 @@ async function checkConnectionAndLoad() {
 // 一覧表示
 // ------------------------------------------------------------
 async function loadRequests() {
-    if (!pyReady || !localStorage.getItem(STORAGE_KEY)) return;
+    if (!pyReady || !getActiveUrl()) return;
 
     const result = await callPy("list_requests()");
 
@@ -452,8 +509,10 @@ deleteConfirmButton.addEventListener("click", confirmDelete);
 
 settingsButton.addEventListener("click", openSettingsModal);
 settingsCancelButton.addEventListener("click", closeSettingsModal);
-settingsTestButton.addEventListener("click", () => testConnection(apiUrlInput.value.trim()));
+settingsTestButton.addEventListener("click", () => testConnection(getSelectedUrl()));
 settingsSaveButton.addEventListener("click", saveSettings);
+approvalApproveButton.addEventListener("click", () => decideApproval("approve"));
+approvalRejectButton.addEventListener("click", () => decideApproval("reject"));
 
 // PWA: Service Worker登録（相対パスで登録することでサブパス配信に対応）
 if ("serviceWorker" in navigator) {
