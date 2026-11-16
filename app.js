@@ -115,6 +115,9 @@ async function showApprovalRequest() {
     const api = params.get("api");
     if (!id || !token || !api) return;
     approvalLinkOpened = true;
+    // すでに別の承認要求や、エラーを表示していても、新しいURLの内容に置き換える
+    approvalCard.classList.add("hidden");
+    message.classList.add("hidden");
     // トークンをアドレスバーと履歴に残さないよう、最初にフラグメントを消す
     history.replaceState(null, "", location.pathname + location.search);
     approvalContext = { id, token, base: `${api.replace(/\/+$/, "")}/api/requests/${encodeURIComponent(id)}` };
@@ -308,6 +311,11 @@ settingsTestButton.addEventListener("click", () => testConnection(getSelectedUrl
 settingsSaveButton.addEventListener("click", saveSettings);
 approvalApproveButton.addEventListener("click", () => decideApproval("approve"));
 approvalRejectButton.addEventListener("click", () => decideApproval("reject"));
+
+// 開いたままのタブに、別の承認URLを貼ったとき(URLの # 以降だけが変わるとページは再読み込みされない)
+window.addEventListener("hashchange", () => {
+    showApprovalRequest();
+});
 
 // PWA: Service Worker登録（相対パスで登録することでサブパス配信に対応）
 if ("serviceWorker" in navigator) {
